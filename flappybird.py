@@ -59,9 +59,9 @@ class Bird:
         if d < 0 or self.y < self.height + 50:  # tilt the bird upwards
             if self.tilt < self.MAX_ROTATION:
                 self.tilt = self.MAX_ROTATION
-            else:
-                if self.tilt > -90:  # when diving down, nose is pointing downwards
-                    self.tilt -= self.ROT_VEL
+        else:
+            if self.tilt > -90:  # when diving down, nose is pointing downwards
+                self.tilt -= self.ROT_VEL
 
     def draw(self, win):
         self.img_count += 1  # keeps track of how many times game loop runs
