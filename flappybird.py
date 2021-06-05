@@ -1,3 +1,9 @@
+"""
+The classic game of flappy bird with an AI playing it using NEAT python module.
+
+@author Elvira Dzidic
+Date Modified: june 5, 2021
+"""
 import pygame
 import neat
 import time
@@ -6,8 +12,10 @@ import random
 
 pygame.font.init()
 
-WIN_WIDTH = 570  # changed from 600 to fit screen
+WIN_WIDTH = 570  # changed to fit screen
 WIN_HEIGHT = 800
+
+GEN = 0
 
 BIRD_IMGS = [
     pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird1.png"))),
@@ -20,7 +28,7 @@ BG_IMG = pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bg.png
 
 STAT_FONT = pygame.font.SysFont("comicsans", 50)
 
-
+# Bird class representing the flappy bird
 class Bird:
     IMGS = BIRD_IMGS
     MAX_ROTATION = 25  # tilting of the bird
@@ -38,11 +46,13 @@ class Bird:
         self.img_count = 0  # which image currently showing
         self.img = self.IMGS[0]  # bird images
 
+    # make the bird jump
     def jump(self):
         self.vel = -10.5  # neg velocity -> upwards
         self.tick_count = 0
         self.height = self.y
 
+    # make the bird move
     def move(self):
         self.tick_count += 1  # how many movements since last jump
 
@@ -102,10 +112,12 @@ class Bird:
         return pygame.mask.from_surface(self.img)
 
 
+# Pipe class representing the pipes
 class Pipe:
     GAP = 200  # space in between pipes
     VEL = 5  # how fast the pipes moves
 
+    # initialize the pipe object
     def __init__(self, x):
         self.x = x
         self.height = 0
@@ -118,18 +130,22 @@ class Pipe:
         self.passed = False  # if the bird passed the pipe
         self.set_height()  # define top and bottom of pipe and how tall it is
 
+    # set the hight of the pipe from the top of the screen
     def set_height(self):
         self.height = random.randrange(50, 450)
         self.top = self.height - self.PIPE_TOP.get_height()  # locate the pipe
         self.bottom = self.height + self.GAP
 
+    # move pipe based on velocity (vel)
     def move(self):
         self.x -= self.VEL  # every time called, the pipe moves to left
 
+    # draw the top and bottom of the pipe
     def draw(self, win):
         win.blit(self.PIPE_TOP, (self.x, self.top))
         win.blit(self.PIPE_BOTTOM, (self.x, self.bottom))
 
+    # returns True if a point in the bird is colliding with the pipe
     def collide(self, bird):
         bird_mask = bird.get_mask()
         top_mask = pygame.mask.from_surface(self.PIPE_TOP)
@@ -152,16 +168,19 @@ class Pipe:
         return False
 
 
+# Base class representing the floor
 class Base:
     VEL = 5  # same as pipe
     WIDTH = BASE_IMG.get_width()
     IMG = BASE_IMG
 
+    # initialize the base object
     def __init__(self, y):
         self.y = y
         self.x1 = 0
         self.x2 = self.WIDTH
 
+    # move two pictures of the floor so it looks like its scrolling
     def move(self):
         self.x1 -= self.VEL
         self.x2 -= self.VEL
@@ -172,29 +191,53 @@ class Base:
         if self.x2 + self.WIDTH < 0:
             self.x2 = self.x1 + self.WIDTH
 
+    # draws the floor by using two images that moves together
     def draw(self, win):
         win.blit(self.IMG, (self.x1, self.y))
         win.blit(self.IMG, (self.x2, self.y))
 
 
-def draw_window(win, bird, pipes, base, score):
+# draws the window for the main game loop
+def draw_window(win, birds, pipes, base, score, gen):
     win.blit(BG_IMG, (0, 0))
 
     for pipe in pipes:
         pipe.draw(win)
 
+    # score
     text = STAT_FONT.render("Score: " + str(score), 1, (255, 255, 255, 255))
     win.blit(text, (WIN_WIDTH - 10 - text.get_width(), 10))
 
+    # generation
+    text = STAT_FONT.render("Generation: " + str(gen), 1, (255, 255, 255, 255))
+    win.blit(text, (10, 10))
+
     base.draw(win)
 
-    bird.draw(win)
+    for bird in birds:
+        bird.draw(win)
+
     pygame.display.update()
 
 
-def main():
-    bird = Bird(230, 350)
-    base = Base(730)
+# fitness function based on the distance the birds reach in the game
+def main(genomes, config):
+    global GEN
+    GEN += 1
+    # each position in the lists will correspond to a bird
+    nets = []
+    ge = []
+    birds = []
+
+    # neural network for genome
+    for _, g in genomes:  # genome is a touple with genomeid and object
+        net = neat.nn.FeedForwardNetwork.create(g, config)  # gnome, config file
+        nets.append(net)
+        birds.append(Bird(230, 350))
+        g.fitness = 0  # start with fitness level 0
+        ge.append(g)
+
+    base = Base(730)  # 730 is the floor
     pipes = [Pipe(700)]
     win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
     clock = pygame.time.Clock()
@@ -207,40 +250,106 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
+                pygame.quit()
+                quit()
+
+        pipe_ind = 0
+        if len(birds) > 0:
+            if (
+                len(pipes) > 1
+                and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width()
+            ):  # determine whether to use first or second pipe on the screen as input for neural network
+                pipe_ind = 1
+        else:  # no birds left
+            run = False
+            break
+
+        for x, bird in enumerate(birds):
+            bird.move()
+            ge[
+                x
+            ].fitness += 0.1  # give each bird a fitness for each frame it stays alive
+
+            # send bird, top pipe and bottom pipe location to determine from network whether to jump or not
+            output = nets[x].activate(
+                (
+                    bird.y,
+                    abs(bird.y - pipes[pipe_ind].height),
+                    abs(bird.y - pipes[pipe_ind].bottom),
+                )
+            )
+
+            if output[0] > 0.5:
+                bird.jump()
 
         # bird.move()
+        add_pipe = False
+        rem = []
         for pipe in pipes:
-            add_pipe = False
-            rem = []
-            if pipe.collide(bird):
-                pass
+            for x, bird in enumerate(birds):
+                if pipe.collide(bird):  # check if every pipe collide with every bird
+                    ge[x].fitness -= 1  # every time a bird hits a pipe, remove fitness
+
+                    # remove the bird
+                    birds.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
+
+                if not pipe.passed and pipe.x < bird.x:
+                    # when bird passes pipe - generate a new
+                    pipe.passed = True
+                    add_pipe = True
 
             if pipe.x + pipe.PIPE_TOP.get_width() < 0:  # pipe of the screen
                 rem.append(pipe)  # remove the pipe
-
-            if not pipe.passed and pipe.x < bird.x:
-                # when bird passes pipe - generate a new
-                pipe.passed = True
-                add_pipe = True
 
             pipe.move()
 
         if add_pipe:
             score += 1
+            for g in ge:
+                g.fitness += (
+                    5  # every gnome in the list is still alive and gains fitness-score
+                )
             pipes.append(Pipe(700))  # add new pipe
 
         # remove old pipes
         for r in rem:
             pipes.remove(r)
 
-        if bird.y + bird.img.get_height() >= 730:
-            pass
+        # if a bird hits the ground or go too high up, remove the bird from the list
+        for x, bird in enumerate(birds):
+            if bird.y + bird.img.get_height() >= 730 or bird.y < 0:
+                birds.pop(x)
+                nets.pop(x)
+                ge.pop(x)
 
         base.move()
-        draw_window(win, bird, pipes, base, score)
-
-    pygame.quit()
-    quit()
+        draw_window(win, birds, pipes, base, score, GEN)
 
 
-main()
+# run the NEAT algorithm to train a neural network to play flappy bird and defines all subheadings
+def run(config_path):
+    config = neat.config.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_path,
+    )
+
+    p = neat.Population(config)  # setting population
+
+    # output
+    p.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+
+    winner = p.run(main, 50)  # main is our fitness function, it's called 50 times
+
+
+if __name__ == "__main__":
+    # path to config file
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "config-feedforward.txt")
+    run(config_path)
